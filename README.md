@@ -1,0 +1,159 @@
+# Building a Kubernetes Cluster from Scratch
+
+This guide will walk you through the steps required to build a Kubernetes cluster from scratch on Ubuntu, including the installation of `containerd`, `kubeadm`, `kubelet`, and `kubectl`.
+
+## Prerequisites
+
+Ensure that you have:
+
+- A server or virtual machine running Ubuntu 24.04.
+- Root or sudo access to the server.
+
+## Steps to Build the Cluster
+
+### 1. System Preparation
+
+Before installing Kubernetes components, you need to configure your system with the necessary kernel parameters and install the container runtime (`containerd`).
+
+### 2. Installing `containerd`
+
+Run the following script to install `containerd`:
+
+```bash
+#!/bin/bash
+
+# sysctl params required by setup, params persist across reboots
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.ipv4.ip_forward = 1
+EOF
+
+# Apply sysctl params without reboot
+sudo sysctl --system
+
+# Verify that net.ipv4.ip_forward is set to 1
+sysctl net.ipv4.ip_forward
+
+# Install containerd
+sudo apt-get update
+sudo apt-get -y install containerd
+
+# Configure containerd with defaults and restart with this config
+sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml
+sudo sed -i 's/SystemdCgroup \= false/SystemdCgroup \= true/g' /etc/containerd/config.toml
+sudo systemctl restart containerd
+```
+
+This script performs the following actions:
+- Configures IP forwarding, which is necessary for Kubernetes networking.
+- Installs `containerd` as the container runtime for Kubernetes.
+- Configures `containerd` to use systemd as the cgroup manager.
+
+### 3. Installing Kubernetes Components (`kubeadm`, `kubelet`, `kubectl`)
+
+Next, install the necessary Kubernetes components (kubeadm, kubelet, kubectl) using the following script:
+
+```bash
+#!/bin/bash
+
+# apt-transport-https may be a dummy package; if so, you can skip that package
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg
+
+# Download the Google Cloud public signing key
+# If the directory `/etc/apt/keyrings` does not exist, it should be created before the curl command.
+# sudo mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+# Add the Kubernetes apt repository
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+# Install kubelet, kubeadm & kubectl, and pin their versions
+sudo apt-get update
+# check available kubeadm versions (when manually executing)
+apt-cache madison kubeadm
+# Install version 1.30.0 for all components
+sudo apt-get install -y kubelet=1.30.0-1.1 kubeadm=1.30.0-1.1 kubectl=1.30.0-1.1
+sudo apt-mark hold kubelet kubeadm kubectl
+```
+
+This script performs the following actions:
+- Adds the Kubernetes package repository.
+- Installs `kubeadm`, `kubelet`, and `kubectl`.
+- Locks the version to `1.30.0` to avoid automatic upgrades.
+
+### 4. Initializing the Kubernetes Cluster
+
+After the installation of `containerd`, `kubeadm`, `kubelet`, and `kubectl`, initialize your Kubernetes control plane using `kubeadm`:
+
+```bash
+sudo kubeadm init
+```
+
+This will bootstrap the Kubernetes control plane. Once the command completes, you'll get instructions on how to configure `kubectl` to interact with the cluster.
+
+### 5. Setting Up `kubectl` for the Master Node
+
+To start using your cluster, you need to configure your `kubectl` access by copying the configuration file to your home directory:
+
+```bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+### 6. Installing the Cilium Pod Network Addon
+
+To enable networking between pods, we will install the Cilium network add-on. Cilium is a powerful networking and security solution for Kubernetes, providing advanced networking capabilities.
+
+Run the following command to install Cilium:
+
+```bash
+    CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+    CLI_ARCH=amd64
+    if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+    curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+    sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+    sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+    rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+```
+
+### Install the plugin 
+    cilium install 
+[Link to the Cilium installation guide](https://docs.cilium.io/en/latest/gettingstarted/k8s-install-default/)    
+
+### check cilium status
+    cilium status
+
+    kubectl -n kube-system exec cilium-2hq5z -- cilium-dbg status
+
+### 7. Joining Worker Nodes to the Cluster
+
+To join worker nodes to your cluster, follow the command generated by
+
+```bash
+kubeadm token create --help
+kubeadm token create --print-join-command
+
+```
+It will look something like this:
+
+```bash
+kubeadm join <master-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+```
+Run this command on all worker nodes that you want to add to the cluster.
+
+### 8. Verifying the Cluster
+
+Once your control plane and worker nodes are up, you can verify the status of the cluster by running `kubectl get node` on the control plane:
+
+```bash
+kubectl get nodes
+```
+
+You should see a list of all nodes in the cluster and their statuses.
+
+## Conclusion
+
+This guide covers the installation of `containerd`, `Kubernetes components`, and the basic steps to bootstrap a Kubernetes cluster from scratch, including configuring the pod network with `Cilium`. You can now manage your cluster using `kubectl` and deploy applications onto it.
+```
